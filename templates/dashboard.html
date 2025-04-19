@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Dashboard</title>
+    <style>
+        :root {
+            --body-bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-color: #212529;
+            --muted-color: #6c757d;
+            --border-color: #dee2e6;
+            --success-color: #198754;
+            --warning-color: #ffc107;
+            --error-color: #dc3545;
+            --info-color: #0dcaf0;
+        }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.5;
+            padding: 15px;
+            background-color: var(--body-bg);
+            color: var(--text-color);
+            margin: 0;
+        }
+        .container {
+            max-width: 850px; /* Slightly wider */
+            margin: 20px auto;
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.08);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 25px;
+            font-weight: 500;
+            color: #343a40; /* Darker heading */
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); /* Adjust minmax */
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .status-card {
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f8f9fa; /* Lighter card background */
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+        .status-card strong {
+            display: block;
+            font-size: 0.9em;
+            color: var(--muted-color);
+            margin-bottom: 5px;
+            text-transform: uppercase; /* Uppercase label */
+        }
+        .status-value {
+            font-size: 1.1em;
+            font-weight: 600;
+            word-wrap: break-word; /* Wrap long status text */
+        }
+        .status-ok { color: var(--success-color); }
+        .status-warn { color: var(--warning-color); }
+        .status-error { color: var(--error-color); }
+        .stats-summary {
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 10px;
+            background-color: #e9ecef;
+            border-radius: 5px;
+            font-size: 1.05em; /* Slightly smaller */
+        }
+        .stats-summary span { margin: 0 8px; } /* Spacing for summary items */
+        .stats-summary strong { font-weight: 600; }
+        .activity-log { margin-top: 20px; }
+        .activity-log h2 {
+            font-weight: 500;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px; /* Increased padding */
+            color: #495057; /* Slightly darker heading */
+        }
+        .activity-log ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            max-height: 350px; /* Increased height */
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            background-color: #ffffff; /* White background for log list */
+        }
+        .activity-log li {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 0.95em;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center; /* Align items vertically */
+        }
+        .activity-log li:last-child { border-bottom: none; }
+        .log-time {
+            font-size: 0.85em;
+            color: var(--muted-color);
+            flex-basis: 150px; /* Wider time column */
+            flex-shrink: 0;
+            text-align: left;
+        }
+        .log-details {
+            flex-grow: 1;
+            word-break: break-word;
+            text-align: left;
+            min-width: 200px; /* Prevent excessive shrinking */
+        }
+        .log-status {
+            font-weight: bold;
+            flex-basis: 120px; /* Wider status column */
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.85em;
+            color: var(--muted-color);
+        }
+        .footer span { display: inline-block; margin: 0 10px; } /* More spacing */
+        .footer code { background-color: #e9ecef; padding: 2px 4px; border-radius: 3px; }
+        /* Style for specific status types */
+        .status-✅, .status-ok { color: var(--success-color); }
+        .status-❌, .status-error { color: var(--error-color); }
+        .status-⚠️, .status-warn { color: var(--warning-color); }
+        .status-⚪, .status-info { color: var(--info-color); } /* Info/Skipped status */
+        .status-▶️, .status-⏹️ { color: var(--muted-color); } /* System status */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Trading Signal Bot Dashboard</h1>
+
+        <div class="status-grid">
+            <div class="status-card">
+                <strong>Bot Status</strong>
+                <span id="bot-status" class="status-value">Loading...</span>
+            </div>
+            <div class="status-card">
+                <strong>Discord Connection</strong>
+                <span id="discord-status" class="status-value">Loading...</span>
+            </div>
+            <div class="status-card">
+                <strong>X API (Last Attempt)</strong>
+                <span id="x-api-status" class="status-value">Loading...</span>
+                <div id="x-api-time" style="font-size: 0.75em; margin-top: 3px;">N/A</div>
+            </div>
+        </div>
+
+        <div class="stats-summary">
+            <span>Attempted: <strong id="posts-attempted">0</strong></span> |
+            <span>Successful: <strong id="posts-succeeded" class="status-ok">0</strong></span> |
+            <span>Failed: <strong id="posts-failed" class="status-error">0</strong></span>
+        </div>
+
+        <div class="activity-log">
+            <h2>Recent Activity (Last <span id="log-count">10</span>)</h2>
+            <ul id="activity-log-list">
+                <li>Loading activity...</li>
+            </ul>
+        </div>
+
+    </div>
+     <div class="footer">
+         <span>Monitoring Channel: <code id="monitoring-channel">N/A</code></span> |
+         <span>Last Updated: <span id="last-update-time">N/A</span></span>
+    </div>
+
+    <script>
+        // --- Helper Functions ---
+        function formatTimestamp(unixTimestamp, includeDate = false) {
+            if (!unixTimestamp) return 'N/A';
+            const date = new Date(unixTimestamp * 1000);
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+            if (includeDate) {
+                const dateOptions = { year: 'numeric', month: 'numeric', day: 'numeric' };
+                // Combine date and time using browser's locale settings
+                 try {
+                    return date.toLocaleString(undefined, {...dateOptions, ...timeOptions });
+                 } catch (e) { // Fallback for older browsers potentially
+                    return date.toISOString(); // Simple fallback
+                 }
+            }
+            return date.toLocaleTimeString([], timeOptions);
+        }
+
+        function applyStatusClass(element, statusText) {
+            if (!element || !statusText) return;
+            // Define status mappings (emoji/keyword -> css class)
+            const statusMap = {
+                '✅': 'status-ok', 'success': 'status-ok', 'connected': 'status-ok', 'resumed': 'status-ok',
+                '❌': 'status-error', 'fail': 'status-error', 'disconnect': 'status-error', 'error': 'status-error',
+                '⚠️': 'status-warn', 'connecting': 'status-warn', 'warning': 'status-warn',
+                '⚪': 'status-info', 'skipped': 'status-info', 'info': 'status-info',
+                '▶️': 'status-muted', 'starting': 'status-muted',
+                '⏹️': 'status-muted', 'stopped': 'status-muted'
+            };
+            // Reset classes
+            element.className = element.className.replace(/status-(ok|warn|error|info|muted)/g, '').trim();
+            // Find and apply class
+            for (const key in statusMap) {
+                if (statusText.toLowerCase().includes(key)) {
+                    element.classList.add(statusMap[key]);
+                    break; // Apply first match
+                }
+            }
+        }
+
+        // --- Main Update Function ---
+        async function fetchAndUpdateStatus() {
+            const currentTime = Date.now() / 1000; // Use local time for "Last Updated"
+            document.getElementById('last-update-time').textContent = formatTimestamp(currentTime);
+
+            try {
+                const response = await fetch('/api/status');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+
+                // Update Top Status Cards
+                const botStatusEl = document.getElementById('bot-status');
+                botStatusEl.textContent = data.bot_status || 'Unknown ❓';
+                applyStatusClass(botStatusEl, data.bot_status || '');
+
+                const discordStatusEl = document.getElementById('discord-status');
+                discordStatusEl.textContent = data.discord_status || 'Unknown ❓';
+                applyStatusClass(discordStatusEl, data.discord_status || '');
+
+                const xApiStatusEl = document.getElementById('x-api-status');
+                // Display only the status part, not the timestamp here
+                xApiStatusEl.textContent = data.last_x_api_status || 'Unknown ❓';
+                applyStatusClass(xApiStatusEl, data.last_x_api_status || '');
+                document.getElementById('x-api-time').textContent = `@ ${formatTimestamp(data.last_x_api_timestamp)}`;
+
+                // Update Summary Stats
+                document.getElementById('posts-attempted').textContent = data.posts_attempted ?? '0';
+                document.getElementById('posts-succeeded').textContent = data.posts_succeeded ?? '0';
+                document.getElementById('posts-failed').textContent = data.posts_failed ?? '0';
+
+                // Update Recent Activity Log
+                const logList = document.getElementById('activity-log-list');
+                logList.innerHTML = ''; // Clear previous entries
+                if (data.recent_activity && data.recent_activity.length > 0) {
+                     document.getElementById('log-count').textContent = data.recent_activity.length;
+                     data.recent_activity.forEach(entry => {
+                        const li = document.createElement('li');
+                        const statusSpan = document.createElement('span');
+                        statusSpan.className = 'log-status';
+                        statusSpan.textContent = entry.status; // Status text/emoji
+                        applyStatusClass(statusSpan, entry.status); // Apply color based on status
+
+                        li.innerHTML = `
+                            <span class="log-time">${formatTimestamp(entry.timestamp, true)}</span>
+                            <span class="log-details"><strong>${entry.type}:</strong> ${entry.details}</span>
+                        `;
+                        li.appendChild(statusSpan); // Append styled status
+                        logList.appendChild(li);
+                    });
+                } else {
+                     document.getElementById('log-count').textContent = '0';
+                     logList.innerHTML = '<li>No recent activity recorded.</li>';
+                }
+
+                 // Update Footer
+                 document.getElementById('monitoring-channel').textContent = data.monitoring_channel || 'N/A';
+
+
+            } catch (error) {
+                console.error('Error fetching status:', error);
+                const botStatusEl = document.getElementById('bot-status');
+                botStatusEl.textContent = 'Error Fetching ❌';
+                applyStatusClass(botStatusEl, 'error');
+                // Clear other potentially stale data
+                document.getElementById('discord-status').textContent = 'Error';
+                document.getElementById('x-api-status').textContent = 'Error';
+                document.getElementById('activity-log-list').innerHTML = '<li>Error fetching activity.</li>';
+            }
+        }
+
+        // --- Initial Load & Interval ---
+        fetchAndUpdateStatus(); // Load data immediately when the page opens
+        setInterval(fetchAndUpdateStatus, 7000); // Update every 7 seconds (adjust as needed)
+
+    </script>
+</body>
+</html>
