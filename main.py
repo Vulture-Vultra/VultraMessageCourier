@@ -207,10 +207,11 @@ except Exception as e:
 
 # --- Helper Function to Post to X ---
 async def post_to_x(text_content, discord_media_attachments=None, reply_to_x_id=None, discord_message_id=None):
-    """Posts content to X, updates state, and logs activity."""
+    """Posts content (including images, videos, GIFs) to X, updates state, and logs activity."""
     global posts_attempted, posts_succeeded, posts_failed
     global last_x_api_status, last_x_api_timestamp
 
+    # --- Check if X clients are initialized ---
     if client_v2 is None or api_v1 is None:
         logging.error("X API client(s) not initialized. Cannot post.")
         add_activity("X Post", "❌ Failed", f"Discord ID: {discord_message_id} | Error: X Client Not Initialized")
@@ -221,47 +222,126 @@ async def post_to_x(text_content, discord_media_attachments=None, reply_to_x_id=
     current_timestamp = time.time()
     status_detail_info = f"Discord ID: {discord_message_id}" if discord_message_id else "Unknown Discord ID"
 
+    # --- Increment attempt counter (thread-safe) ---
     with state_lock:
         posts_attempted += 1
 
     try:
         # --- Media Handling ---
+        # Variables to track media composition for the tweet
+        media_count = 0
+        has_video = False
+        has_gif = False
+
         if discord_media_attachments:
             logging.info(f"Processing {len(discord_media_attachments)} media attachments for Msg {discord_message_id}...")
-            processed_media_count = 0
+
             for attachment in discord_media_attachments:
-                if processed_media_count >= 4:
+                # --- Check media limits ---
+                if media_count >= 4:
                     logging.warning(f"Max 4 media items reached. Skipping further attachments for Msg {discord_message_id}.")
-                    break
-                logging.info(f"Downloading: {attachment.filename} ({attachment.size} bytes)")
+                    add_activity("Warning", "⚠️ Media Skipped", f"Discord ID: {discord_message_id} - Max 4 media items limit reached.")
+                    break # Stop processing more attachments
+
+                content_type = attachment.content_type
+                filename = attachment.filename
+                media_category = None
+                is_current_video = False
+                is_current_gif = False
+
+                # --- Determine media category and check mixing rules ---
+                if content_type and content_type.startswith('video/'):
+                    if has_gif:
+                        logging.warning(f"Cannot mix Video and GIF. Skipping video '{filename}' for Msg {discord_message_id}.")
+                        add_activity("Warning", "⚠️ Media Skipped", f"Discord ID: {discord_message_id} - Cannot mix Video and GIF (Skipped '{filename}')")
+                        continue # Skip this attachment
+                    media_category = 'tweet_video'
+                    is_current_video = True
+                    logging.info(f"Detected VIDEO: '{filename}', category: {media_category}")
+                elif content_type and content_type.startswith('image/gif'):
+                    if has_video:
+                        logging.warning(f"Cannot mix Video and GIF. Skipping GIF '{filename}' for Msg {discord_message_id}.")
+                        add_activity("Warning", "⚠️ Media Skipped", f"Discord ID: {discord_message_id} - Cannot mix Video and GIF (Skipped '{filename}')")
+                        continue # Skip this attachment
+                    media_category = 'tweet_gif'
+                    is_current_gif = True
+                    logging.info(f"Detected GIF: '{filename}', category: {media_category}")
+                elif content_type and content_type.startswith('image/'):
+                    media_category = 'tweet_image'
+                    logging.info(f"Detected IMAGE: '{filename}', category: {media_category}")
+                else:
+                    logging.warning(f"Unsupported attachment type '{content_type}' for file '{filename}'. Skipping.")
+                    add_activity("Warning", "⚠️ Media Skipped", f"Discord ID: {discord_message_id} - Unsupported type '{content_type}' ('{filename}')")
+                    continue # Skip unsupported types
+
+                # --- Download Media ---
+                logging.info(f"Downloading: {filename} ({attachment.size} bytes)")
+                media_data = None
                 try:
-                    response = await loop.run_in_executor(None, lambda: requests.get(attachment.url, stream=True, timeout=45))
+                    # Increased timeout again just in case
+                    response = await loop.run_in_executor(None, lambda: requests.get(attachment.url, stream=True, timeout=90))
                     response.raise_for_status()
                     media_data = BytesIO()
                     for chunk in response.iter_content(chunk_size=8192):
                         media_data.write(chunk)
                     media_data.seek(0)
-                    logging.info(f"Finished downloading {attachment.filename}.")
-
-                    logging.info(f"Uploading {attachment.filename} to X...")
-                    uploaded_media = await loop.run_in_executor(
-                         None,
-                         lambda: api_v1.media_upload(filename=attachment.filename, file=media_data)
-                    )
-                    media_ids_v1.append(uploaded_media.media_id_string)
-                    logging.info(f"Uploaded {attachment.filename}, Media ID: {uploaded_media.media_id_string}")
-                    processed_media_count += 1
+                    logging.info(f"Finished downloading {filename}.")
                 except requests.exceptions.RequestException as e:
-                    logging.error(f"Error downloading media {attachment.filename}: {e}", exc_info=True)
-                    raise Exception(f"Media Download Failed: {attachment.filename}") from e
-                except tweepy.errors.TweepyException as e:
-                    logging.error(f"Error uploading media {attachment.filename}: {e}", exc_info=True)
-                    raise Exception(f"Media Upload Failed: {attachment.filename}") from e
+                    logging.error(f"Error downloading media {filename}: {e}", exc_info=True)
+                    # Skip this attachment if download fails, but continue trying others
+                    add_activity("Warning", "⚠️ Media Failed", f"Discord ID: {discord_message_id} - Download failed for '{filename}': {e}")
+                    continue
                 except Exception as e:
-                    logging.error(f"Unexpected error processing media {attachment.filename}: {e}", exc_info=True)
-                    raise Exception(f"Media Processing Failed: {attachment.filename}") from e
+                    logging.error(f"Unexpected error downloading {filename}: {e}", exc_info=True)
+                    add_activity("Warning", "⚠️ Media Failed", f"Discord ID: {discord_message_id} - Download failed for '{filename}': {e}")
+                    continue
+
+                # --- Upload Media ---
+                if media_data:
+                    logging.info(f"Uploading {filename} to X with category '{media_category}'...")
+                    try:
+                        uploaded_media = await loop.run_in_executor(
+                             None,
+                             lambda: api_v1.media_upload(
+                                 filename=filename,
+                                 file=media_data,
+                                 media_category=media_category,
+                                 wait_for_async_finalize=True # Tell Tweepy to wait for processing
+                             )
+                        )
+                        # Check for processing errors if possible (media_upload might raise error if wait fails)
+                        # Note: Direct status check might require `media_id` first, then `get_media_upload_status`.
+                        # Relying on wait_for_async_finalize raising an error if processing fails.
+                        media_ids_v1.append(uploaded_media.media_id_string)
+                        logging.info(f"Uploaded {filename}, Media ID: {uploaded_media.media_id_string}")
+
+                        # Update tracking flags
+                        media_count += 1
+                        has_video = has_video or is_current_video
+                        has_gif = has_gif or is_current_gif
+
+                    except tweepy.errors.TweepyException as e:
+                        logging.error(f"Error uploading/processing media {filename}: {e}", exc_info=True)
+                        # Check for specific errors if needed (e.g., file size, duration, format)
+                        error_detail = str(e)
+                        # Try to extract a more specific message if available
+                        if hasattr(e, 'api_codes') and e.api_codes: error_detail = f"Code {e.api_codes[0]}: {e.api_messages[0]}"
+                        add_activity("Warning", "⚠️ Media Failed", f"Discord ID: {discord_message_id} - Upload/Processing failed for '{filename}': {error_detail}")
+                        # Stop processing further media for *this message* if one fails upload? Optional, currently continues.
+                    except Exception as e:
+                        logging.error(f"Unexpected error uploading/processing media {filename}: {e}", exc_info=True)
+                        add_activity("Warning", "⚠️ Media Failed", f"Discord ID: {discord_message_id} - Upload/Processing failed for '{filename}': {e}")
 
         # --- Post Tweet using API v2 ---
+        # Only proceed if there's text OR successfully uploaded media
+        if not text_content and not media_ids_v1:
+            logging.warning(f"No text content or successfully uploaded media for Msg {discord_message_id}. Nothing to post.")
+            # Don't count this as a failure if nothing could be uploaded/posted
+            # Need to adjust how failures are counted if this case occurs often
+            with state_lock:
+                 posts_attempted -= 1 # Decrement attempt count as nothing was really attempted post-media failure
+            return None # Nothing to post
+
         logging.info(f"Preparing to post tweet for Msg {discord_message_id}...")
         post_params = {"text": text_content}
         if media_ids_v1:
@@ -282,22 +362,24 @@ async def post_to_x(text_content, discord_media_attachments=None, reply_to_x_id=
             last_x_api_status = "✅ Success"
             last_x_api_timestamp = current_timestamp
         add_activity("X Post", "✅ Success", status_detail_info)
-        save_state()
+        save_state() # Save state after successful post increments
         # --- End Update State ---
 
         logging.info(f"Successfully posted to X. ID: {new_tweet_id} (Attempts: {posts_attempted}, Success: {posts_succeeded})")
         return new_tweet_id
 
     except Exception as e:
+        # This block catches failures during media processing OR the create_tweet call
         error_type = type(e).__name__
-        error_msg = str(e).replace('\n', ' ')
+        # Use repr(e) for potentially more detail than str(e)
+        error_msg = repr(e).replace('\n', ' ')
         logging.error(f"Error during post_to_x for Msg {discord_message_id}: {error_type}: {error_msg}", exc_info=True)
 
         short_error = f"{error_type}"
         if isinstance(e, tweepy.errors.TweepyException) and hasattr(e, 'api_messages') and e.api_messages:
-            short_error = f"{error_type}: {e.api_messages[0]}"
+             short_error = f"{error_type}: {e.api_messages[0]}"
         elif len(error_msg) > 0:
-            short_error = f"{error_type}: {error_msg[:70]}..."
+             short_error = f"{error_type}: {error_msg[:70]}..."
 
         if "Error:" not in status_detail_info:
             status_detail_info += f" | Error: {short_error}"
@@ -308,10 +390,10 @@ async def post_to_x(text_content, discord_media_attachments=None, reply_to_x_id=
             last_x_api_status = f"❌ Failed ({short_error})"
             last_x_api_timestamp = current_timestamp
         add_activity("X Post", "❌ Failed", status_detail_info)
-        save_state()
+        save_state() # Save state after failure increments
         # --- End Update State ---
         return None
-
+        
 # --- Flask Setup ---
 app = Flask('')
 
